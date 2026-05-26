@@ -1,105 +1,81 @@
-<h1 align="center">Claude Usage</h1>
+# Token Juice
 
-<p align="center">
-  A lightweight macOS menu bar app that monitors your Claude AI usage in real time.
-</p>
+A KDE Plasma 6 widget that shows your **Claude** and **Cursor** AI usage at a glance,
+side-by-side, right in your panel or on your desktop.
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Tauri-2.0-blue" alt="Tauri 2.0" />
-  <img src="https://img.shields.io/badge/React-19-61DAFB" alt="React 19" />
-  <img src="https://img.shields.io/badge/Rust-orange" alt="Rust" />
-  <img src="https://img.shields.io/badge/TypeScript-blue" alt="TypeScript" />
-</p>
+![Plasma 6](https://img.shields.io/badge/Plasma-6-blue)
+![Rust](https://img.shields.io/badge/Rust-stable-orange)
+![License](https://img.shields.io/badge/license-MIT-green)
 
----
+## What it shows
 
-## Features
+- **Claude** — session (5h) and weekly (7d) usage percentages, plan tier, extra usage spend
+- **Cursor** — plan usage, on-demand usage, billing cycle reset
+- Compact bars in the panel, full view with reset times when expanded
 
-- Session (5h) and weekly (7d) usage tracking via the Claude OAuth API
-- Animated progress bars with color-coded usage levels
-- OAuth PKCE login with automatic token refresh
-- Plan detection (Pro, Max 5X/20X, Team, Enterprise)
-- Toggle between "usage" and "remaining" display modes
-- Configurable refresh intervals
-- Menu bar tray icon with live usage percentage
+## How it works
 
-## Prerequisites
+A small Rust helper binary (`token-juice-helper`) fetches usage data and prints JSON.
+The Plasma widget polls the helper and renders the result.
 
-- [Node.js](https://nodejs.org/) (LTS recommended)
-- [pnpm](https://pnpm.io/)
-- [Rust](https://www.rust-lang.org/tools/install)
-- Tauri 2 system dependencies ([see guide](https://v2.tauri.app/start/prerequisites/))
+- **Claude auth:** reads `~/.claude/.credentials.json` (created by the Claude CLI)
+- **Cursor auth:** reads session cookies directly from your browser profile
 
-## Install & Run
+No app to keep running. No tray icon. Just the widget.
+
+## Install
+
+**Requirements:**
+
+- KDE Plasma 6 (`kpackagetool6` from `plasma-sdk`)
+- Rust toolchain (`cargo`, install via [rustup](https://rustup.rs))
 
 ```bash
-# Clone the repo
-git clone https://github.com/lnmunhoz/claude-usage.git
+git clone https://github.com/jpzbkk/claude-usage.git
 cd claude-usage
-
-# Install dependencies
-pnpm install
-
-# Run in development mode
-pnpm tauri dev
+./install.sh
 ```
 
-## Build for Production
+Then: right-click your panel or desktop → **Add Widgets** → search for **Token Juice**.
 
-### macOS (Apple Silicon)
+## Uninstall
 
 ```bash
-pnpm build:mac
+./install.sh remove
 ```
 
-The output will be in `src-tauri/target/aarch64-apple-darwin/release/bundle/` and includes:
+## Layout
 
-- `.dmg` installer
-- `.app` bundle
+```
+.
+├── install.sh         # build + install / remove
+├── helpers/           # Rust helper binary (fetches usage data)
+│   ├── Cargo.toml
+│   └── src/main.rs
+└── package/           # Plasma applet (QML)
+    ├── metadata.json
+    └── contents/
+        ├── ui/        # CompactRepresentation, FullRepresentation, UsageBar, ...
+        └── config/
+```
 
-### Linux (x86_64)
+`install.sh` builds the helper to `~/.local/share/token-juice/token-juice-helper`
+and installs the plasmoid via `kpackagetool6`.
+
+## Troubleshooting
+
+**Widget shows nothing or "error":**
 
 ```bash
-pnpm build:linux
+# Run the helper directly to see the raw output
+~/.local/share/token-juice/token-juice-helper claude
+~/.local/share/token-juice/token-juice-helper cursor
 ```
 
-> Requires the `x86_64-unknown-linux-gnu` Rust target. Install it with:
->
-> ```bash
-> rustup target add x86_64-unknown-linux-gnu
-> ```
-
-The output will be in `src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/` and includes:
-
-- `.deb` package
-- `.AppImage`
-
-### Generic build
+**After updating the widget, panel still shows the old version:**
 
 ```bash
-pnpm tauri build
-```
-
-Builds for your current platform and architecture. The output will be in `src-tauri/target/release/bundle/`.
-
-## Tech Stack
-
-| Layer    | Technology                 |
-| -------- | -------------------------- |
-| Frontend | React 19, TypeScript, Vite |
-| Backend  | Rust, Tauri 2              |
-| Styling  | Custom CSS with animations |
-
-## Debug Commands
-
-You can run diagnostic commands from the browser DevTools console while the app is running in development mode (`pnpm tauri dev`):
-
-```js
-// Show token info (expiry, refresh status, rate limit tier)
-window.__TAURI_INTERNALS__.invoke("debug_token_info").then(console.log);
-
-// Force refresh the OAuth token
-window.__TAURI_INTERNALS__.invoke("force_refresh_token").then(console.log);
+kquitapp6 plasmashell && kstart plasmashell
 ```
 
 ## License
