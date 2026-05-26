@@ -774,20 +774,47 @@ async fn fetch_claude_usage_oauth() -> Result<(ClaudeData, Option<String>), Stri
         .ok_or_else(|| "Claude credentials are missing accessToken.".to_string())?;
 
     let client = reqwest::Client::new();
-    let response = client
-        .get("https://api.anthropic.com/api/oauth/usage")
-        .header("Accept", "application/json")
-        .header("Authorization", format!("Bearer {}", access_token))
-        .header("anthropic-beta", "oauth-2025-04-20")
-        .timeout(std::time::Duration::from_secs(15))
-        .send()
-        .await
-        .map_err(|e| format!("Claude OAuth request failed: {}", e))?;
 
-    let status = response.status();
-    if !status.is_success() {
-        return Err(format!("Claude OAuth API returned HTTP {}", status));
+    let max_retries = 3;
+    let mut last_status = reqwest::StatusCode::default();
+    let mut response = None;
+    for attempt in 0..max_retries {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(500 * (1 << attempt))).await;
+        }
+        match client
+            .get("https://api.anthropic.com/api/oauth/usage")
+            .header("Accept", "application/json")
+            .header("Authorization", format!("Bearer {}", access_token))
+            .header("anthropic-beta", "oauth-2025-04-20")
+            .timeout(std::time::Duration::from_secs(15))
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                last_status = resp.status();
+                if resp.status().is_success() {
+                    response = Some(resp);
+                    break;
+                }
+                if resp.status() != reqwest::StatusCode::TOO_MANY_REQUESTS {
+                    return Err(format!("Claude OAuth API returned HTTP {}", resp.status()));
+                }
+            }
+            Err(e) => {
+                if attempt == max_retries - 1 {
+                    return Err(format!("Claude OAuth request failed: {}", e));
+                }
+            }
+        }
     }
+
+    let response = response.ok_or_else(|| {
+        format!(
+            "Claude OAuth API returned HTTP {} after {} retries (Anthropic may have restricted third-party OAuth access)",
+            last_status, max_retries
+        )
+    })?;
 
     let body = response
         .text()
@@ -868,9 +895,16 @@ async fn fetch_claude_usage_oauth() -> Result<(ClaudeData, Option<String>), Stri
 // Fetch Claude usage (web cookie fallback)
 // ---------------------------------------------------------------------------
 
+fn claude_web_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 async fn fetch_claude_usage_web() -> Result<ClaudeData, String> {
     let session_keys = find_claude_session_cookies()?;
-    let client = reqwest::Client::new();
+    let client = claude_web_client();
 
     let mut last_error: Option<String> = None;
     for session_key in &session_keys {
@@ -880,6 +914,8 @@ async fn fetch_claude_usage_web() -> Result<ClaudeData, String> {
             .get("https://claude.ai/api/organizations")
             .header("Accept", "application/json")
             .header("Cookie", &cookie_header)
+            .header("Referer", "https://claude.ai/")
+            .header("Origin", "https://claude.ai")
             .timeout(std::time::Duration::from_secs(15))
             .send()
             .await
@@ -908,6 +944,8 @@ async fn fetch_claude_usage_web() -> Result<ClaudeData, String> {
             .get(&usage_url)
             .header("Accept", "application/json")
             .header("Cookie", &cookie_header)
+            .header("Referer", "https://claude.ai/")
+            .header("Origin", "https://claude.ai")
             .timeout(std::time::Duration::from_secs(15))
             .send()
             .await
@@ -945,6 +983,8 @@ async fn fetch_claude_usage_web() -> Result<ClaudeData, String> {
             .get(&overage_url)
             .header("Accept", "application/json")
             .header("Cookie", &cookie_header)
+            .header("Referer", "https://claude.ai/")
+            .header("Origin", "https://claude.ai")
             .timeout(std::time::Duration::from_secs(15))
             .send()
             .await
@@ -965,6 +1005,8 @@ async fn fetch_claude_usage_web() -> Result<ClaudeData, String> {
             .get(account_url)
             .header("Accept", "application/json")
             .header("Cookie", &cookie_header)
+            .header("Referer", "https://claude.ai/")
+            .header("Origin", "https://claude.ai")
             .timeout(std::time::Duration::from_secs(15))
             .send()
             .await
