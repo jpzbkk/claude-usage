@@ -1,12 +1,18 @@
-![Token Juice](icon.png)
+<p align="center">
+  <img src="icon.png" alt="Token Juice" width="128" height="128" />
+</p>
 
-## Token Juice
+<h1 align="center">Token Juice</h1>
 
-A sleek KDE Plasma 6 widget that shows your **Claude**, **Cursor**, and **Codex** AI usage at a glance, right in your panel or on your desktop.
+<p align="center">
+  A KDE Plasma 6 widget that shows your <strong>Claude</strong>, <strong>Cursor</strong>, and <strong>Codex</strong> AI usage at a glance, right in your panel or on your desktop.
+</p>
 
-![Plasma 6](https://img.shields.io/badge/Plasma-6-blue)
-![Rust](https://img.shields.io/badge/Rust-stable-orange)
-![License](https://img.shields.io/badge/license-MIT-green)
+<p align="center">
+  <img src="https://img.shields.io/badge/Plasma-6-blue" alt="Plasma 6" />
+  <img src="https://img.shields.io/badge/Rust-stable-orange" alt="Rust" />
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT" />
+</p>
 
 ---
 
