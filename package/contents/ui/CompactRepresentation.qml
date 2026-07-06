@@ -1,7 +1,7 @@
 import QtQuick 2.15
 import QtQuick.Layouts 1.15
-import org.kde.plasma.core as PlasmaCore
 import org.kde.kirigami as Kirigami
+import org.kde.plasma.core as PlasmaCore
 
 MouseArea {
     id: compactRoot
@@ -13,24 +13,29 @@ MouseArea {
 
     // Tell the panel how wide we need to be
     implicitWidth: {
-        var w = margins * 2
-        if (root.showCursor) {
-            w += iconSz + spacing + barWidth + spacing + barWidth
-        }
-        if (root.showCursor && root.showClaude) {
-            w += spacing + 4 + spacing  // gap
-        }
-        if (root.showClaude) {
-            w += iconSz + spacing + barWidth + spacing + barWidth
-        }
-        return w
-    }
+        var w = margins * 2;
+        if (root.showCursor)
+            w += iconSz + spacing + barWidth + spacing + barWidth;
 
+        if (root.showCursor && (root.showClaude || root.showCodex))
+            w += spacing + 4 + spacing;
+
+        // gap
+        if (root.showClaude)
+            w += iconSz + spacing + barWidth + spacing + barWidth;
+
+        if (root.showClaude && root.showCodex)
+            w += spacing + 4 + spacing;
+
+        if (root.showCodex)
+            w += iconSz + spacing + barWidth + spacing + barWidth;
+
+        return w;
+    }
     Layout.preferredWidth: implicitWidth
     Layout.minimumWidth: implicitWidth
     Layout.maximumWidth: implicitWidth
     clip: true
-
     hoverEnabled: true
     onClicked: root.expanded = !root.expanded
 
@@ -67,14 +72,31 @@ MouseArea {
                 width: parent.width
                 radius: 2
                 height: {
-                    var pct = root.cursorPlanPercent
-                    if (root.displayMode === "remaining") pct = 100 - pct
-                    return parent.height * Math.max(0, Math.min(100, pct)) / 100
+                    var pct = root.cursorPlanPercent;
+                    if (root.displayMode === "remaining")
+                        pct = 100 - pct;
+
+                    return parent.height * Math.max(0, Math.min(100, pct)) / 100;
                 }
                 color: "#818cf8"
-                Behavior on height { NumberAnimation { duration: 400 } }
+
+                Behavior on height {
+                    NumberAnimation {
+                        duration: 400
+                    }
+
+                }
+
             }
-            Rectangle { anchors.fill: parent; radius: 2; color: Kirigami.Theme.backgroundColor; opacity: 0.3; z: -1 }
+
+            Rectangle {
+                anchors.fill: parent
+                radius: 2
+                color: Kirigami.Theme.backgroundColor
+                opacity: 0.3
+                z: -1
+            }
+
         }
 
         // Cursor On-Demand bar
@@ -90,19 +112,36 @@ MouseArea {
                 width: parent.width
                 radius: 2
                 height: {
-                    var pct = root.cursorOnDemandPercent
-                    if (root.displayMode === "remaining") pct = 100 - pct
-                    return parent.height * Math.max(0, Math.min(100, pct)) / 100
+                    var pct = root.cursorOnDemandPercent;
+                    if (root.displayMode === "remaining")
+                        pct = 100 - pct;
+
+                    return parent.height * Math.max(0, Math.min(100, pct)) / 100;
                 }
                 color: "#22c55e"
-                Behavior on height { NumberAnimation { duration: 400 } }
+
+                Behavior on height {
+                    NumberAnimation {
+                        duration: 400
+                    }
+
+                }
+
             }
-            Rectangle { anchors.fill: parent; radius: 2; color: Kirigami.Theme.backgroundColor; opacity: 0.3; z: -1 }
+
+            Rectangle {
+                anchors.fill: parent
+                radius: 2
+                color: Kirigami.Theme.backgroundColor
+                opacity: 0.3
+                z: -1
+            }
+
         }
 
         // Gap between providers
         Item {
-            visible: root.showCursor && root.showClaude
+            visible: root.showCursor && (root.showClaude || root.showCodex)
             Layout.preferredWidth: 4
             Layout.fillHeight: true
         }
@@ -131,14 +170,31 @@ MouseArea {
                 width: parent.width
                 radius: 2
                 height: {
-                    var pct = root.claudeSessionPercent
-                    if (root.displayMode === "remaining") pct = 100 - pct
-                    return parent.height * Math.max(0, Math.min(100, pct)) / 100
+                    var pct = root.claudeSessionPercent;
+                    if (root.displayMode === "remaining")
+                        pct = 100 - pct;
+
+                    return parent.height * Math.max(0, Math.min(100, pct)) / 100;
                 }
                 color: "#facc15"
-                Behavior on height { NumberAnimation { duration: 400 } }
+
+                Behavior on height {
+                    NumberAnimation {
+                        duration: 400
+                    }
+
+                }
+
             }
-            Rectangle { anchors.fill: parent; radius: 2; color: Kirigami.Theme.backgroundColor; opacity: 0.3; z: -1 }
+
+            Rectangle {
+                anchors.fill: parent
+                radius: 2
+                color: Kirigami.Theme.backgroundColor
+                opacity: 0.3
+                z: -1
+            }
+
         }
 
         // Claude Weekly bar
@@ -154,15 +210,131 @@ MouseArea {
                 width: parent.width
                 radius: 2
                 height: {
-                    var pct = root.claudeWeeklyPercent
-                    if (root.displayMode === "remaining") pct = 100 - pct
-                    return parent.height * Math.max(0, Math.min(100, pct)) / 100
+                    var pct = root.claudeWeeklyPercent;
+                    if (root.displayMode === "remaining")
+                        pct = 100 - pct;
+
+                    return parent.height * Math.max(0, Math.min(100, pct)) / 100;
                 }
                 color: "#f97316"
-                Behavior on height { NumberAnimation { duration: 400 } }
+
+                Behavior on height {
+                    NumberAnimation {
+                        duration: 400
+                    }
+
+                }
+
             }
-            Rectangle { anchors.fill: parent; radius: 2; color: Kirigami.Theme.backgroundColor; opacity: 0.3; z: -1 }
+
+            Rectangle {
+                anchors.fill: parent
+                radius: 2
+                color: Kirigami.Theme.backgroundColor
+                opacity: 0.3
+                z: -1
+            }
+
         }
+
+        // Gap between providers
+        Item {
+            visible: root.showClaude && root.showCodex
+            Layout.preferredWidth: 4
+            Layout.fillHeight: true
+        }
+
+        // ---- Codex group ----
+        Image {
+            visible: root.showCodex
+            Layout.preferredWidth: compactRoot.iconSz
+            Layout.preferredHeight: compactRoot.iconSz
+            Layout.alignment: Qt.AlignVCenter
+            source: "codex-logo.svg"
+            sourceSize: Qt.size(compactRoot.iconSz, compactRoot.iconSz)
+            fillMode: Image.PreserveAspectFit
+        }
+
+        // Codex 5h bar
+        Rectangle {
+            visible: root.showCodex
+            Layout.preferredWidth: compactRoot.barWidth
+            Layout.fillHeight: true
+            radius: 2
+            color: "transparent"
+
+            Rectangle {
+                anchors.bottom: parent.bottom
+                width: parent.width
+                radius: 2
+                height: {
+                    var pct = root.codexSessionPercent;
+                    if (root.displayMode === "remaining")
+                        pct = 100 - pct;
+
+                    return parent.height * Math.max(0, Math.min(100, pct)) / 100;
+                }
+                color: "#38bdf8"
+
+                Behavior on height {
+                    NumberAnimation {
+                        duration: 400
+                    }
+
+                }
+
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                radius: 2
+                color: Kirigami.Theme.backgroundColor
+                opacity: 0.3
+                z: -1
+            }
+
+        }
+
+        // Codex weekly bar
+        Rectangle {
+            visible: root.showCodex
+            Layout.preferredWidth: compactRoot.barWidth
+            Layout.fillHeight: true
+            radius: 2
+            color: "transparent"
+
+            Rectangle {
+                anchors.bottom: parent.bottom
+                width: parent.width
+                radius: 2
+                height: {
+                    var pct = root.codexWeeklyPercent;
+                    if (root.displayMode === "remaining")
+                        pct = 100 - pct;
+
+                    return parent.height * Math.max(0, Math.min(100, pct)) / 100;
+                }
+                color: "#a3e635"
+
+                Behavior on height {
+                    NumberAnimation {
+                        duration: 400
+                    }
+
+                }
+
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                radius: 2
+                color: Kirigami.Theme.backgroundColor
+                opacity: 0.3
+                z: -1
+            }
+
+        }
+
     }
 
     // Error/loading indicator dot
@@ -176,4 +348,5 @@ MouseArea {
         radius: 2
         color: root.loading ? "#facc15" : "#ef4444"
     }
+
 }

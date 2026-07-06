@@ -1,7 +1,7 @@
 //! Token Juice KDE Plasma Widget Helper (Rust)
 //!
-//! Fetches usage data for Cursor and Claude, outputs JSON to stdout.
-//! Usage: token-juice-helper <cursor|claude>
+//! Fetches usage data for Cursor, Claude, and Codex, outputs JSON to stdout.
+//! Usage: token-juice-helper <cursor|claude|codex>
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -69,6 +69,8 @@ struct CursorOnDemandUsage {
 struct ClaudeCredentials {
     #[serde(rename = "accessToken", alias = "access_token")]
     access_token: Option<String>,
+    #[serde(rename = "subscriptionType", alias = "subscription_type")]
+    subscription_type: Option<String>,
     #[serde(rename = "rateLimitTier", alias = "rate_limit_tier")]
     rate_limit_tier: Option<String>,
 }
@@ -164,6 +166,19 @@ struct ClaudeData {
     plan_type: Option<String>,
     extra_usage_spend: Option<f64>,
     extra_usage_limit: Option<f64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexData {
+    session_percent_used: f64,
+    weekly_percent_used: f64,
+    session_reset_epoch: Option<i64>,
+    weekly_reset_epoch: Option<i64>,
+    plan_type: Option<String>,
+    has_credits: Option<bool>,
+    credits_remaining: Option<f64>,
+    latest_activity: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -311,6 +326,39 @@ fn plan_type_from_rate_tier(rate_limit_tier: Option<&str>) -> Option<String> {
     }
 }
 
+fn claude_plan_type(
+    subscription_type: Option<&str>,
+    rate_limit_tier: Option<&str>,
+) -> Option<String> {
+    subscription_type
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty() && s != "-")
+        .or_else(|| plan_type_from_rate_tier(rate_limit_tier))
+}
+
+fn claude_plan_type_from_file() -> Option<String> {
+    let path = claude_credentials_path().ok()?;
+    let raw = fs::read_to_string(path).ok()?;
+
+    if let Ok(payload) = serde_json::from_str::<ClaudeKeychainPayload>(&raw) {
+        if let Some(oauth) = payload.claude_ai_oauth {
+            return claude_plan_type(
+                oauth.subscription_type.as_deref(),
+                oauth.rate_limit_tier.as_deref(),
+            );
+        }
+    }
+
+    serde_json::from_str::<ClaudeCredentials>(&raw)
+        .ok()
+        .and_then(|credentials| {
+            claude_plan_type(
+                credentials.subscription_type.as_deref(),
+                credentials.rate_limit_tier.as_deref(),
+            )
+        })
+}
+
 // ---------------------------------------------------------------------------
 // Cookie extraction
 // ---------------------------------------------------------------------------
@@ -331,7 +379,10 @@ fn find_cursor_cookie_header() -> Result<String, String> {
         }
     }
 
-    Err("No Cursor session cookie found. Make sure you are logged into cursor.com in your browser.".to_string())
+    Err(
+        "No Cursor session cookie found. Make sure you are logged into cursor.com in your browser."
+            .to_string(),
+    )
 }
 
 fn find_claude_session_cookies() -> Result<Vec<String>, String> {
@@ -346,7 +397,9 @@ fn find_claude_session_cookies() -> Result<Vec<String>, String> {
     }
 
     if session_keys.is_empty() {
-        return Err("No claude.ai sessionKey cookie found. Log into claude.ai in your browser.".to_string());
+        return Err(
+            "No claude.ai sessionKey cookie found. Log into claude.ai in your browser.".to_string(),
+        );
     }
 
     Ok(session_keys)
@@ -374,7 +427,9 @@ fn claude_credentials_path() -> Result<PathBuf, String> {
         .ok_or_else(|| "Could not resolve home directory for Claude credentials.".to_string())?;
     let candidates = [
         home.join(".claude").join(".credentials.json"),
-        home.join(".config").join("claude").join(".credentials.json"),
+        home.join(".config")
+            .join("claude")
+            .join(".credentials.json"),
     ];
     for candidate in &candidates {
         if candidate.exists() {
@@ -493,8 +548,13 @@ fn write_claude_credentials_to_file(
         serde_json::to_string_pretty(blob)
     };
     let json = json.map_err(|e| format!("Failed to serialize refreshed credentials: {}", e))?;
-    fs::write(path, json)
-        .map_err(|e| format!("Failed to write refreshed credentials to {}: {}", path.display(), e))
+    fs::write(path, json).map_err(|e| {
+        format!(
+            "Failed to write refreshed credentials to {}: {}",
+            path.display(),
+            e
+        )
+    })
 }
 
 async fn refresh_claude_token(
@@ -565,6 +625,7 @@ async fn refresh_claude_token(
 
     Ok(ClaudeCredentials {
         access_token: Some(new_access_token),
+        subscription_type: updated_blob.subscription_type,
         rate_limit_tier: updated_blob.rate_limit_tier,
     })
 }
@@ -615,6 +676,7 @@ async fn load_claude_credentials_from_keychain() -> Result<ClaudeCredentials, St
 
     Ok(ClaudeCredentials {
         access_token: Some(access_token.to_string()),
+        subscription_type: oauth.subscription_type,
         rate_limit_tier: oauth.rate_limit_tier,
     })
 }
@@ -659,6 +721,7 @@ async fn load_claude_credentials_from_file() -> Result<ClaudeCredentials, String
 
             return Ok(ClaudeCredentials {
                 access_token: Some(access_token.to_string()),
+                subscription_type: oauth.subscription_type,
                 rate_limit_tier: oauth.rate_limit_tier,
             });
         }
@@ -671,9 +734,7 @@ async fn load_claude_credentials_from_file() -> Result<ClaudeCredentials, String
     if let Some(access_token) = credentials.access_token.as_deref() {
         validate_claude_oauth_access_token(access_token, "credentials file")?;
     } else {
-        return Err(
-            "Claude credentials file has no accessToken.".to_string(),
-        );
+        return Err("Claude credentials file has no accessToken.".to_string());
     }
     Ok(credentials)
 }
@@ -683,7 +744,9 @@ async fn load_claude_credentials() -> Result<ClaudeCredentials, String> {
         Ok(credentials) => Ok(credentials),
         Err(_) => load_claude_credentials_from_file()
             .await
-            .map_err(|file_err| format!("No usable Claude OAuth credentials available: {}", file_err)),
+            .map_err(|file_err| {
+                format!("No usable Claude OAuth credentials available: {}", file_err)
+            }),
     }
 }
 
@@ -852,29 +915,28 @@ async fn fetch_claude_usage_oauth() -> Result<(ClaudeData, Option<String>), Stri
         .and_then(usage_window_reset)
         .or_else(|| extract_window_reset(&value, &["seven_day", "current_week"]));
 
-    let (extra_usage_spend, extra_usage_limit) = if let Some(extra) = typed
-        .as_ref()
-        .and_then(|t| t.extra_usage.as_ref())
-    {
-        let is_enabled = extra.is_enabled.unwrap_or(false);
-        if is_enabled {
-            (
-                extra
-                    .used_credits
-                    .or(extra.spend)
-                    .or(extra.used)
-                    .or(extra.monthly_spend),
-                extra.monthly_limit.or(extra.limit),
-            )
+    let (extra_usage_spend, extra_usage_limit) =
+        if let Some(extra) = typed.as_ref().and_then(|t| t.extra_usage.as_ref()) {
+            let is_enabled = extra.is_enabled.unwrap_or(false);
+            if is_enabled {
+                (
+                    extra
+                        .used_credits
+                        .or(extra.spend)
+                        .or(extra.used)
+                        .or(extra.monthly_spend),
+                    extra.monthly_limit.or(extra.limit),
+                )
+            } else {
+                (None, None)
+            }
         } else {
-            (None, None)
-        }
-    } else {
-        let spend = value_to_f64(&value, &["extra_usage_spend", "spend", "monthly_spend"]);
-        let limit = value_to_f64(&value, &["extra_usage_limit", "limit", "monthly_limit"]);
-        (spend, limit)
-    };
+            let spend = value_to_f64(&value, &["extra_usage_spend", "spend", "monthly_spend"]);
+            let limit = value_to_f64(&value, &["extra_usage_limit", "limit", "monthly_limit"]);
+            (spend, limit)
+        };
 
+    let subscription_type = credentials.subscription_type.clone();
     let rate_tier = credentials.rate_limit_tier.clone();
 
     Ok((
@@ -883,7 +945,7 @@ async fn fetch_claude_usage_oauth() -> Result<(ClaudeData, Option<String>), Stri
             weekly_percent_used: clamp_percent(weekly_percent_used),
             session_reset,
             weekly_reset,
-            plan_type: plan_type_from_rate_tier(rate_tier.as_deref()),
+            plan_type: claude_plan_type(subscription_type.as_deref(), rate_tier.as_deref()),
             extra_usage_spend,
             extra_usage_limit,
         },
@@ -1044,13 +1106,155 @@ async fn fetch_claude_usage_web() -> Result<ClaudeData, String> {
 async fn fetch_claude_usage() -> Result<ClaudeData, String> {
     match fetch_claude_usage_oauth().await {
         Ok((data, _)) => Ok(data),
-        Err(oauth_err) => fetch_claude_usage_web().await.map_err(|web_err| {
-            format!(
-                "Claude OAuth failed: {}. Claude web fallback failed: {}",
-                oauth_err, web_err
-            )
-        }),
+        Err(oauth_err) => {
+            let mut data = fetch_claude_usage_web().await.map_err(|web_err| {
+                format!(
+                    "Claude OAuth failed: {}. Claude web fallback failed: {}",
+                    oauth_err, web_err
+                )
+            })?;
+            if data.plan_type.as_deref().unwrap_or("").is_empty() {
+                data.plan_type = claude_plan_type_from_file();
+            }
+            Ok(data)
+        }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Fetch Codex usage from local session rate-limit events
+// ---------------------------------------------------------------------------
+
+fn codex_sessions_dir() -> Result<PathBuf, String> {
+    if let Ok(config_home) = std::env::var("CODEX_HOME") {
+        let trimmed = config_home.trim();
+        if !trimmed.is_empty() {
+            let candidate = PathBuf::from(trimmed).join("sessions");
+            if candidate.is_dir() {
+                return Ok(candidate);
+            }
+        }
+    }
+
+    let home = dirs::home_dir()
+        .ok_or_else(|| "Could not resolve home directory for Codex sessions.".to_string())?;
+    let candidate = home.join(".codex").join("sessions");
+    if candidate.is_dir() {
+        return Ok(candidate);
+    }
+
+    Err("Codex session directory not found at ~/.codex/sessions.".to_string())
+}
+
+fn collect_codex_session_files(
+    dir: &std::path::Path,
+    out: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    for entry in fs::read_dir(dir)
+        .map_err(|e| format!("Failed to read Codex sessions at {}: {}", dir.display(), e))?
+    {
+        let entry = entry.map_err(|e| format!("Failed to read Codex session entry: {}", e))?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_codex_session_files(&path, out)?;
+        } else if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn value_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    Some(current)
+}
+
+fn f64_at(value: &Value, path: &[&str]) -> Option<f64> {
+    value_at(value, path).and_then(|v| {
+        v.as_f64()
+            .or_else(|| v.as_str().and_then(|s| s.parse::<f64>().ok()))
+    })
+}
+
+fn i64_at(value: &Value, path: &[&str]) -> Option<i64> {
+    value_at(value, path).and_then(|v| {
+        v.as_i64()
+            .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+    })
+}
+
+fn bool_at(value: &Value, path: &[&str]) -> Option<bool> {
+    value_at(value, path).and_then(|v| v.as_bool())
+}
+
+fn string_at(value: &Value, path: &[&str]) -> Option<String> {
+    value_at(value, path).and_then(|v| v.as_str().map(|s| s.to_string()))
+}
+
+fn fetch_codex_usage() -> Result<CodexData, String> {
+    let sessions_dir = codex_sessions_dir()?;
+    let mut files = Vec::new();
+    collect_codex_session_files(&sessions_dir, &mut files)?;
+
+    let mut latest: Option<(String, CodexData)> = None;
+    for path in files {
+        let raw = match fs::read_to_string(&path) {
+            Ok(raw) => raw,
+            Err(_) => continue,
+        };
+
+        for line in raw.lines() {
+            if !line.contains("\"token_count\"") || !line.contains("\"rate_limits\"") {
+                continue;
+            }
+            let value: Value = match serde_json::from_str(line) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let rate_limits = match value_at(&value, &["payload", "rate_limits"]) {
+                Some(rate_limits) => rate_limits,
+                None => continue,
+            };
+            if string_at(rate_limits, &["limit_id"]).as_deref() != Some("codex") {
+                continue;
+            }
+
+            let timestamp = string_at(&value, &["timestamp"]).unwrap_or_default();
+            let data = CodexData {
+                session_percent_used: clamp_percent(
+                    f64_at(rate_limits, &["primary", "used_percent"]).unwrap_or(0.0),
+                ),
+                weekly_percent_used: clamp_percent(
+                    f64_at(rate_limits, &["secondary", "used_percent"]).unwrap_or(0.0),
+                ),
+                session_reset_epoch: i64_at(rate_limits, &["primary", "resets_at"]),
+                weekly_reset_epoch: i64_at(rate_limits, &["secondary", "resets_at"]),
+                plan_type: string_at(rate_limits, &["plan_type"]),
+                has_credits: bool_at(rate_limits, &["credits", "has_credits"]),
+                credits_remaining: f64_at(rate_limits, &["credits", "balance"]),
+                latest_activity: if timestamp.is_empty() {
+                    None
+                } else {
+                    Some(timestamp.clone())
+                },
+            };
+
+            if latest
+                .as_ref()
+                .map(|(latest_timestamp, _)| timestamp > *latest_timestamp)
+                .unwrap_or(true)
+            {
+                latest = Some((timestamp, data));
+            }
+        }
+    }
+
+    latest
+        .map(|(_, data)| data)
+        .ok_or_else(|| "No Codex rate-limit events found. Start or continue a Codex session so the CLI records usage.".to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -1079,8 +1283,11 @@ fn make_err(provider: &str, error: String) -> HelperResponse {
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    if args.len() < 2 || (args[1] != "cursor" && args[1] != "claude") {
-        let resp = make_err("unknown", "Usage: token-juice-helper <cursor|claude>".to_string());
+    if args.len() < 2 || (args[1] != "cursor" && args[1] != "claude" && args[1] != "codex") {
+        let resp = make_err(
+            "unknown",
+            "Usage: token-juice-helper <cursor|claude|codex>".to_string(),
+        );
         println!("{}", serde_json::to_string(&resp).unwrap());
         std::process::exit(1);
     }
@@ -1095,6 +1302,10 @@ async fn main() {
         "claude" => match fetch_claude_usage().await {
             Ok(data) => make_ok("claude", data),
             Err(e) => make_err("claude", e),
+        },
+        "codex" => match fetch_codex_usage() {
+            Ok(data) => make_ok("codex", data),
+            Err(e) => make_err("codex", e),
         },
         _ => unreachable!(),
     };

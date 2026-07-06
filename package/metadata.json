@@ -2,7 +2,7 @@
     "KPlugin": {
         "Id": "com.tokenjuice.plasmoid",
         "Name": "Token Juice",
-        "Description": "Monitor Cursor and Claude AI token usage",
+        "Description": "Monitor Cursor, Claude, and Codex AI token usage",
         "Icon": "preferences-desktop-color",
         "Authors": [
             {

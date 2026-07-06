@@ -6,11 +6,35 @@ import org.kde.kirigami as Kirigami
 ColumnLayout {
     id: fullRoot
 
-    Layout.minimumWidth: root.showCursor && root.showClaude ? 160 : 90
-    Layout.minimumHeight: 200
-    Layout.preferredWidth: root.showCursor && root.showClaude ? 200 : 120
-    Layout.preferredHeight: 340
+    readonly property int visibleProviderCount: (root.showCursor ? 1 : 0) + (root.showClaude ? 1 : 0) + (root.showCodex ? 1 : 0)
 
+    function formatReset(isoString) {
+        if (!isoString)
+            return "";
+
+        try {
+            var d = typeof isoString === "number" ? new Date(isoString * 1000) : new Date(isoString);
+            var now = new Date();
+            var diffMs = d.getTime() - now.getTime();
+            if (diffMs <= 0)
+                return "now";
+
+            var diffMin = Math.floor(diffMs / 60000);
+            if (diffMin < 60)
+                return diffMin + "m";
+
+            var diffHr = Math.floor(diffMin / 60);
+            var remMin = diffMin % 60;
+            return diffHr + "h " + remMin + "m";
+        } catch (e) {
+            return isoString.substring(0, 16);
+        }
+    }
+
+    Layout.minimumWidth: visibleProviderCount > 1 ? 80 * visibleProviderCount : 90
+    Layout.minimumHeight: 200
+    Layout.preferredWidth: visibleProviderCount > 1 ? 100 * visibleProviderCount : 120
+    Layout.preferredHeight: 340
     spacing: 4
 
     // ---- Loading / Error indicator ----
@@ -28,6 +52,7 @@ ColumnLayout {
             width: parent.width - 12
             horizontalAlignment: Text.AlignHCenter
         }
+
     }
 
     // ---- All providers side by side ----
@@ -104,30 +129,33 @@ ColumnLayout {
                             glowColor: "#22c55e"
                             displayMode: root.displayMode
                         }
+
                     }
+
                 }
 
                 // Reset info (2-line fixed area for alignment)
                 Text {
                     Layout.alignment: Qt.AlignHCenter
-                    text: root.cursorBillingCycleEnd.length > 0
-                        ? "Resets " + root.cursorBillingCycleEnd.substring(0, 10)
-                        : " "
+                    text: root.cursorBillingCycleEnd.length > 0 ? "Resets " + root.cursorBillingCycleEnd.substring(0, 10) : " "
                     font.pixelSize: 8
                     color: Kirigami.Theme.disabledTextColor
                 }
+
                 // Second line placeholder to match Claude's 2 lines
                 Text {
                     Layout.alignment: Qt.AlignHCenter
                     text: " "
                     font.pixelSize: 8
                 }
+
             }
+
         }
 
         // ---- Separator between providers ----
         Rectangle {
-            visible: root.showCursor && root.showClaude
+            visible: root.showCursor && (root.showClaude || root.showCodex)
             Layout.fillHeight: true
             Layout.topMargin: 8
             Layout.bottomMargin: 8
@@ -202,33 +230,131 @@ ColumnLayout {
                             glowColor: "#f97316"
                             displayMode: root.displayMode
                         }
+
                     }
+
                 }
 
                 // Reset info (2 lines)
                 Text {
                     Layout.alignment: Qt.AlignHCenter
-                    text: root.claudeSessionReset.length > 0
-                        ? "5h: " + fullRoot.formatReset(root.claudeSessionReset)
-                        : " "
+                    text: root.claudeSessionReset.length > 0 ? "5h: " + fullRoot.formatReset(root.claudeSessionReset) : " "
                     font.pixelSize: 8
                     color: Kirigami.Theme.disabledTextColor
                 }
+
                 Text {
                     Layout.alignment: Qt.AlignHCenter
-                    text: root.claudeWeeklyReset.length > 0
-                        ? "Wk: " + fullRoot.formatReset(root.claudeWeeklyReset)
-                        : " "
+                    text: root.claudeWeeklyReset.length > 0 ? "Wk: " + fullRoot.formatReset(root.claudeWeeklyReset) : " "
                     font.pixelSize: 8
                     color: Kirigami.Theme.disabledTextColor
                 }
+
             }
+
         }
+
+        // ---- Separator between providers ----
+        Rectangle {
+            visible: root.showClaude && root.showCodex
+            Layout.fillHeight: true
+            Layout.topMargin: 8
+            Layout.bottomMargin: 8
+            width: 1
+            color: Kirigami.Theme.separatorColor
+            opacity: 0.4
+        }
+
+        // ---- Codex group ----
+        Item {
+            visible: root.showCodex
+            Layout.fillHeight: true
+            Layout.fillWidth: true
+
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 2
+
+                Image {
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: 16
+                    Layout.preferredHeight: 16
+                    source: "codex-logo.svg"
+                    sourceSize: Qt.size(16, 16)
+                    fillMode: Image.PreserveAspectFit
+                }
+
+                Text {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: "Codex"
+                    font.pixelSize: 11
+                    font.bold: true
+                    color: "#38bdf8"
+                }
+
+                Text {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: (root.codexPlanType || "---").toUpperCase()
+                    font.pixelSize: 8
+                    font.letterSpacing: 1
+                    color: Kirigami.Theme.disabledTextColor
+                }
+
+                Item {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+
+                    RowLayout {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        spacing: 6
+
+                        UsageBar {
+                            Layout.fillHeight: true
+                            percent: root.codexSessionPercent
+                            tag: "5h"
+                            barColor: "#38bdf8"
+                            glowColor: "#38bdf8"
+                            displayMode: root.displayMode
+                        }
+
+                        UsageBar {
+                            Layout.fillHeight: true
+                            percent: root.codexWeeklyPercent
+                            tag: "Wk"
+                            barColor: "#a3e635"
+                            glowColor: "#a3e635"
+                            displayMode: root.displayMode
+                        }
+
+                    }
+
+                }
+
+                Text {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: root.codexSessionReset ? "5h: " + fullRoot.formatReset(root.codexSessionReset) : " "
+                    font.pixelSize: 8
+                    color: Kirigami.Theme.disabledTextColor
+                }
+
+                Text {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: root.codexWeeklyReset ? "Wk: " + fullRoot.formatReset(root.codexWeeklyReset) : " "
+                    font.pixelSize: 8
+                    color: Kirigami.Theme.disabledTextColor
+                }
+
+            }
+
+        }
+
     }
 
     // ---- No providers message ----
     Text {
-        visible: !root.showCursor && !root.showClaude
+        visible: fullRoot.visibleProviderCount === 0
         Layout.alignment: Qt.AlignHCenter
         Layout.fillHeight: true
         text: "No providers enabled.\nRight-click to configure."
@@ -238,20 +364,4 @@ ColumnLayout {
         verticalAlignment: Text.AlignVCenter
     }
 
-    function formatReset(isoString) {
-        if (!isoString) return ""
-        try {
-            var d = new Date(isoString)
-            var now = new Date()
-            var diffMs = d.getTime() - now.getTime()
-            if (diffMs <= 0) return "now"
-            var diffMin = Math.floor(diffMs / 60000)
-            if (diffMin < 60) return diffMin + "m"
-            var diffHr = Math.floor(diffMin / 60)
-            var remMin = diffMin % 60
-            return diffHr + "h " + remMin + "m"
-        } catch (e) {
-            return isoString.substring(0, 16)
-        }
-    }
 }

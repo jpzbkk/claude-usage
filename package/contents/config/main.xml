@@ -23,6 +23,11 @@
             <label>Show Claude usage</label>
         </entry>
 
+        <entry name="showCodex" type="Bool">
+            <default>true</default>
+            <label>Show Codex usage</label>
+        </entry>
+
         <entry name="displayMode" type="String">
             <default>remaining</default>
             <label>Display mode: "usage" (fills up) or "remaining" (drains down)</label>
