@@ -5,7 +5,7 @@
 <h1 align="center">Token Juice</h1>
 
 <p align="center">
-  A KDE Plasma 6 widget that shows your <strong>Claude</strong>, <strong>Cursor</strong>, and <strong>Codex</strong> AI usage at a glance, right in your panel or on your desktop.
+  A lightweight KDE Plasma 6 widget that monitors your <strong>Claude</strong>, <strong>Cursor</strong>, and <strong>Codex</strong> AI usage in real time. Tracks session (5h) and weekly (7d) limits with compact progress bars, browser-based auth, and auto-refresh. Built with Rust and QML.
 </p>
 
 <p align="center">
