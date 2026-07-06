@@ -1,40 +1,39 @@
-# Token Juice
+![Token Juice](icon.png)
 
-A KDE Plasma 6 widget that shows your **Claude**, **Cursor**, and **Codex** AI usage at a glance,
-side-by-side, right in your panel or on your desktop.
+## Token Juice
+
+A sleek KDE Plasma 6 widget that shows your **Claude**, **Cursor**, and **Codex** AI usage at a glance, right in your panel or on your desktop.
 
 ![Plasma 6](https://img.shields.io/badge/Plasma-6-blue)
 ![Rust](https://img.shields.io/badge/Rust-stable-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-## What it shows
+---
+
+> [!WARNING]
+> This project was **vibed into existence**. The code was largely generated through AI-assisted development. Expect rough edges, unconventional patterns, and the occasional "it works, don't touch it" moment. Use at your own risk.
+
+## Features
 
 - **Claude** — session (5h) and weekly (7d) usage percentages, plan tier, extra usage spend
 - **Cursor** — plan usage, on-demand usage, billing cycle reset
 - **Codex** — 5h and weekly usage percentages from the Codex CLI rate-limit events
 - Compact bars in the panel, full view with reset times when expanded
+- No background process — just the widget
 
-## How it works
+## Prerequisites
 
-A small Rust helper binary (`token-juice-helper`) fetches usage data and prints JSON.
-The Plasma widget polls the helper and renders the result.
+- [KDE Plasma 6](https://kde.org/plasma-desktop/) (`kpackagetool6` from `plasma-sdk`)
+- [Rust toolchain](https://www.rust-lang.org/tools/install) (`cargo`, install via [rustup](https://rustup.rs))
 
-- **Claude auth:** reads `~/.claude/.credentials.json` (created by the Claude CLI)
-- **Cursor auth:** reads session cookies directly from your browser profile
-- **Codex usage:** reads the latest `token_count.rate_limits` event from `~/.codex/sessions`; set `CODEX_HOME` if your Codex config lives elsewhere
-
-No app to keep running. No tray icon. Just the widget.
-
-## Install
-
-**Requirements:**
-
-- KDE Plasma 6 (`kpackagetool6` from `plasma-sdk`)
-- Rust toolchain (`cargo`, install via [rustup](https://rustup.rs))
+## Install & Run
 
 ```bash
+# Clone the repo
 git clone https://github.com/jpzbkk/claude-usage.git
 cd claude-usage
+
+# Build and install
 ./install.sh
 ```
 
@@ -64,6 +63,15 @@ Then: right-click your panel or desktop → **Add Widgets** → search for **Tok
 `install.sh` builds the helper to `~/.local/share/token-juice/token-juice-helper`
 and installs the plasmoid via `kpackagetool6`.
 
+## How it works
+
+A small Rust helper binary (`token-juice-helper`) fetches usage data and prints JSON.
+The Plasma widget polls the helper and renders the result.
+
+- **Claude auth:** reads `~/.claude/.credentials.json` (created by the Claude CLI)
+- **Cursor auth:** reads session cookies directly from your browser profile
+- **Codex usage:** reads the latest `token_count.rate_limits` event from `~/.codex/sessions`; set `CODEX_HOME` if your Codex config lives elsewhere
+
 ## Troubleshooting
 
 **Widget shows nothing or "error":**
@@ -80,6 +88,14 @@ and installs the plasmoid via `kpackagetool6`.
 ```bash
 kquitapp6 plasmashell && kstart plasmashell
 ```
+
+## Tech Stack
+
+| Layer    | Technology                  |
+| -------- | --------------------------- |
+| Widget   | KDE Plasma 6 (QML)         |
+| Backend  | Rust                        |
+| Auth     | Browser cookies, CLI config |
 
 ## License
 
