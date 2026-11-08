@@ -20,6 +20,9 @@ PlasmoidItem {
     property string claudeError: ""
     property string codexError: ""
     readonly property bool loading: cursorLoading || claudeLoading || codexLoading
+    // Prevent concurrent fetches
+    property bool fetchInProgress: false
+    property bool pendingFetch: false
     readonly property string errorMessage: {
         var parts = [];
         if (cursorError)
@@ -74,6 +77,16 @@ PlasmoidItem {
 
     // ---- Polling ----
     function fetchAll() {
+        if (fetchInProgress) {
+            pendingFetch = true;
+            return ;
+        }
+        if (!root.showCursor && !root.showClaude && !root.showCodex)
+            return ;
+
+        fetchInProgress = true;
+        pendingFetch = false;
+        fetchWatchdog.restart();
         if (root.showCursor) {
             root.cursorLoading = true;
             executable.exec(buildCmd("cursor"));
@@ -88,6 +101,26 @@ PlasmoidItem {
         }
     }
 
+    // Drop any in-flight helper invocations and stuck state
+    function resetFetchState() {
+        var sources = executable.connectedSources.slice();
+        for (var i = 0; i < sources.length; i++) executable.disconnectSource(sources[i])
+        fetchWatchdog.stop();
+        cursorLoading = false;
+        claudeLoading = false;
+        codexLoading = false;
+        fetchInProgress = false;
+        pendingFetch = false;
+    }
+
+    function forceRefresh() {
+        resetFetchState();
+        cursorError = "";
+        claudeError = "";
+        codexError = "";
+        fetchAll();
+    }
+
     function normalizePlanType(value, fallback) {
         if (value === undefined || value === null)
             return fallback;
@@ -97,6 +130,109 @@ PlasmoidItem {
             return fallback;
 
         return normalized;
+    }
+
+    // ---- Helper result parsing ----
+    function handleHelperResult(source, data) {
+        var stdout = data["stdout"];
+        var stderr = (data["stderr"] || "").toString().trim();
+        var exitCode = data["exit code"];
+        stdout = (stdout === undefined || stdout === null) ? "" : stdout.toString().trim();
+        // Determine which provider this result is for from the command
+        var isCursor = source.indexOf("cursor") !== -1;
+        var isClaude = source.indexOf("claude") !== -1;
+        var isCodex = source.indexOf("codex") !== -1;
+        // Reset loading states and skip processing for disabled providers
+        if (isCursor) {
+            root.cursorLoading = false;
+            if (!root.showCursor)
+                return ;
+
+        }
+        if (isClaude) {
+            root.claudeLoading = false;
+            if (!root.showClaude)
+                return ;
+
+        }
+        if (isCodex) {
+            root.codexLoading = false;
+            if (!root.showCodex)
+                return ;
+
+        }
+        if (stdout.length === 0) {
+            var errMsg = stderr || ("Helper exited with code " + exitCode);
+            if (isCursor)
+                root.cursorError = errMsg;
+
+            if (isClaude)
+                root.claudeError = errMsg;
+
+            if (isCodex)
+                root.codexError = errMsg;
+
+            return ;
+        }
+        try {
+            var result = JSON.parse(stdout);
+            if (!result.ok) {
+                if (isCursor)
+                    root.cursorError = result.error || "Unknown error";
+
+                if (isClaude)
+                    root.claudeError = result.error || "Unknown error";
+
+                if (isCodex)
+                    root.codexError = result.error || "Unknown error";
+
+                return ;
+            }
+            var d = result.data;
+            if (result.provider === "cursor") {
+                root.cursorError = "";
+                root.cursorPlanPercent = d.percentUsed || 0;
+                root.cursorOnDemandPercent = d.onDemandPercentUsed || 0;
+                root.cursorUsedUsd = d.usedUsd || 0;
+                root.cursorLimitUsd = d.limitUsd || 0;
+                root.cursorRemainingUsd = d.remainingUsd || 0;
+                root.cursorOnDemandUsedUsd = d.onDemandUsedUsd || 0;
+                root.cursorOnDemandLimitUsd = d.onDemandLimitUsd;
+                root.cursorMembershipType = d.membershipType || "";
+                root.cursorBillingCycleEnd = d.billingCycleEnd || "";
+                root.cursorDataLoaded = true;
+            } else if (result.provider === "claude") {
+                root.claudeError = "";
+                root.claudeSessionPercent = d.sessionPercentUsed || 0;
+                root.claudeWeeklyPercent = d.weeklyPercentUsed || 0;
+                root.claudeSessionReset = d.sessionReset || "";
+                root.claudeWeeklyReset = d.weeklyReset || "";
+                root.claudePlanType = root.normalizePlanType(d.planType, "max");
+                root.claudeExtraSpend = d.extraUsageSpend;
+                root.claudeExtraLimit = d.extraUsageLimit;
+                root.claudeDataLoaded = true;
+            } else if (result.provider === "codex") {
+                root.codexError = "";
+                root.codexSessionPercent = d.sessionPercentUsed || 0;
+                root.codexWeeklyPercent = d.weeklyPercentUsed || 0;
+                root.codexSessionReset = d.sessionResetEpoch;
+                root.codexWeeklyReset = d.weeklyResetEpoch;
+                root.codexPlanType = root.normalizePlanType(d.planType, "");
+                root.codexCreditsRemaining = d.creditsRemaining;
+                root.codexLatestActivity = d.latestActivity || "";
+                root.codexDataLoaded = true;
+            }
+        } catch (e) {
+            if (isCursor)
+                root.cursorError = "Parse error: " + e.toString();
+
+            if (isClaude)
+                root.claudeError = "Parse error: " + e.toString();
+
+            if (isCodex)
+                root.codexError = "Parse error: " + e.toString();
+
+        }
     }
 
     // Tooltip
@@ -130,6 +266,21 @@ PlasmoidItem {
     onShowCursorChanged: fetchAll()
     onShowClaudeChanged: fetchAll()
     onShowCodexChanged: fetchAll()
+    // ---- Context menu ----
+    Plasmoid.contextualActions: [
+        PlasmaCore.Action {
+            text: i18n("Force Refresh")
+            icon.name: "view-refresh"
+            onTriggered: root.forceRefresh()
+        },
+        PlasmaCore.Action {
+            text: i18n("Restart Plasma Shell")
+            icon.name: "system-reboot"
+            // Detach via systemd-run so the restart sequence survives
+            // plasmashell (our own parent process) going down.
+            onTriggered: executable.exec("systemd-run --user --collect bash -c 'kquitapp6 plasmashell; sleep 2; kstart plasmashell'")
+        }
+    ]
 
     // ---- Executable DataSource ----
     Plasma5Support.DataSource {
@@ -142,100 +293,28 @@ PlasmoidItem {
         engine: "executable"
         connectedSources: []
         onNewData: function(source, data) {
-            var stdout = data["stdout"];
-            if (stdout === undefined || stdout === null)
-                return ;
-
             executable.disconnectSource(source);
-            stdout = stdout.toString().trim();
-            var stderr = (data["stderr"] || "").toString().trim();
-            var exitCode = data["exit code"];
-            // Determine which provider this result is for from the command
-            var isCursor = source.indexOf("cursor") !== -1;
-            var isClaude = source.indexOf("claude") !== -1;
-            var isCodex = source.indexOf("codex") !== -1;
-            if (isCursor)
-                root.cursorLoading = false;
-
-            if (isClaude)
-                root.claudeLoading = false;
-
-            if (isCodex)
-                root.codexLoading = false;
-
-            if (stdout.length === 0) {
-                var errMsg = stderr || ("Helper exited with code " + exitCode);
-                if (isCursor)
-                    root.cursorError = errMsg;
-
-                if (isClaude)
-                    root.claudeError = errMsg;
-
-                if (isCodex)
-                    root.codexError = errMsg;
-
-                return ;
-            }
-            try {
-                var result = JSON.parse(stdout);
-                if (!result.ok) {
-                    if (isCursor)
-                        root.cursorError = result.error || "Unknown error";
-
-                    if (isClaude)
-                        root.claudeError = result.error || "Unknown error";
-
-                    if (isCodex)
-                        root.codexError = result.error || "Unknown error";
-
-                    return ;
-                }
-                var d = result.data;
-                if (result.provider === "cursor") {
-                    root.cursorError = "";
-                    root.cursorPlanPercent = d.percentUsed || 0;
-                    root.cursorOnDemandPercent = d.onDemandPercentUsed || 0;
-                    root.cursorUsedUsd = d.usedUsd || 0;
-                    root.cursorLimitUsd = d.limitUsd || 0;
-                    root.cursorRemainingUsd = d.remainingUsd || 0;
-                    root.cursorOnDemandUsedUsd = d.onDemandUsedUsd || 0;
-                    root.cursorOnDemandLimitUsd = d.onDemandLimitUsd;
-                    root.cursorMembershipType = d.membershipType || "";
-                    root.cursorBillingCycleEnd = d.billingCycleEnd || "";
-                    root.cursorDataLoaded = true;
-                } else if (result.provider === "claude") {
-                    root.claudeError = "";
-                    root.claudeSessionPercent = d.sessionPercentUsed || 0;
-                    root.claudeWeeklyPercent = d.weeklyPercentUsed || 0;
-                    root.claudeSessionReset = d.sessionReset || "";
-                    root.claudeWeeklyReset = d.weeklyReset || "";
-                    root.claudePlanType = root.normalizePlanType(d.planType, "max");
-                    root.claudeExtraSpend = d.extraUsageSpend;
-                    root.claudeExtraLimit = d.extraUsageLimit;
-                    root.claudeDataLoaded = true;
-                } else if (result.provider === "codex") {
-                    root.codexError = "";
-                    root.codexSessionPercent = d.sessionPercentUsed || 0;
-                    root.codexWeeklyPercent = d.weeklyPercentUsed || 0;
-                    root.codexSessionReset = d.sessionResetEpoch;
-                    root.codexWeeklyReset = d.weeklyResetEpoch;
-                    root.codexPlanType = root.normalizePlanType(d.planType, "");
-                    root.codexCreditsRemaining = d.creditsRemaining;
-                    root.codexLatestActivity = d.latestActivity || "";
-                    root.codexDataLoaded = true;
-                }
-            } catch (e) {
-                if (isCursor)
-                    root.cursorError = "Parse error: " + e.toString();
-
-                if (isClaude)
-                    root.claudeError = "Parse error: " + e.toString();
-
-                if (isCodex)
-                    root.codexError = "Parse error: " + e.toString();
+            root.handleHelperResult(source, data);
+            // Always settle the round here, even when a provider was
+            // disabled mid-fetch — an early return inside the handler
+            // must never leave fetchInProgress stuck.
+            if (!root.cursorLoading && !root.claudeLoading && !root.codexLoading) {
+                fetchWatchdog.stop();
+                root.fetchInProgress = false;
+                if (root.pendingFetch)
+                    root.fetchAll();
 
             }
         }
+    }
+
+    Timer {
+        id: fetchWatchdog
+
+        // A helper invocation that never reports back would otherwise
+        // leave fetchInProgress stuck and stop all future polling.
+        interval: 45000
+        onTriggered: root.resetFetchState()
     }
 
     Timer {

@@ -534,23 +534,70 @@ fn write_keychain_oauth_blob(blob: &ClaudeOAuthBlob, account: &str) -> Result<()
     Ok(())
 }
 
+// Claude Code stores fields in this file the helper doesn't model (e.g.
+// organizationUuid), so a refresh must merge the new tokens into the existing
+// JSON rather than replace the file with our own serialization.
+fn merge_refreshed_oauth_json(existing_raw: Option<&str>, blob: &ClaudeOAuthBlob) -> String {
+    let fallback = || {
+        serde_json::to_string_pretty(&ClaudeKeychainPayload {
+            claude_ai_oauth: Some(blob.clone()),
+        })
+        .unwrap_or_default()
+    };
+
+    let mut root = match existing_raw.and_then(|raw| serde_json::from_str::<Value>(raw).ok()) {
+        Some(Value::Object(map)) => map,
+        _ => return fallback(),
+    };
+
+    let oauth = root
+        .entry("claudeAiOauth")
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    let oauth = match oauth.as_object_mut() {
+        Some(oauth) => oauth,
+        None => return fallback(),
+    };
+
+    if let Some(ref token) = blob.access_token {
+        oauth.insert("accessToken".to_string(), Value::String(token.clone()));
+    }
+    if let Some(ref token) = blob.refresh_token {
+        oauth.insert("refreshToken".to_string(), Value::String(token.clone()));
+    }
+    if let Some(expires_at) = blob.expires_at {
+        oauth.insert("expiresAt".to_string(), Value::from(expires_at));
+    }
+
+    serde_json::to_string_pretty(&Value::Object(root)).unwrap_or_else(|_| fallback())
+}
+
 fn write_claude_credentials_to_file(
     path: &std::path::Path,
     blob: &ClaudeOAuthBlob,
-    use_keychain_format: bool,
 ) -> Result<(), String> {
-    let json = if use_keychain_format {
-        let payload = ClaudeKeychainPayload {
-            claude_ai_oauth: Some(blob.clone()),
-        };
-        serde_json::to_string_pretty(&payload)
-    } else {
-        serde_json::to_string_pretty(blob)
-    };
-    let json = json.map_err(|e| format!("Failed to serialize refreshed credentials: {}", e))?;
-    fs::write(path, json).map_err(|e| {
+    let existing = fs::read_to_string(path).ok();
+    let json = merge_refreshed_oauth_json(existing.as_deref(), blob);
+
+    // Write to a temp file in the same directory and rename over the
+    // original, so a concurrent reader never sees a partial file.
+    let tmp_path = path.with_file_name(".credentials.json.tmp");
+    fs::write(&tmp_path, &json).map_err(|e| {
         format!(
             "Failed to write refreshed credentials to {}: {}",
+            tmp_path.display(),
+            e
+        )
+    })?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&tmp_path, fs::Permissions::from_mode(0o600));
+    }
+
+    fs::rename(&tmp_path, path).map_err(|e| {
+        format!(
+            "Failed to replace credentials at {}: {}",
             path.display(),
             e
         )
@@ -619,7 +666,7 @@ async fn refresh_claude_token(
     #[cfg(not(target_os = "macos"))]
     {
         if let Ok(path) = claude_credentials_path() {
-            let _ = write_claude_credentials_to_file(&path, &updated_blob, true);
+            let _ = write_claude_credentials_to_file(&path, &updated_blob);
         }
     }
 
@@ -681,6 +728,30 @@ async fn load_claude_credentials_from_keychain() -> Result<ClaudeCredentials, St
     })
 }
 
+// Re-read the credentials file and return its credentials only if they hold
+// an access token that is not about to expire.
+fn reread_valid_credentials(path: &std::path::Path) -> Option<ClaudeCredentials> {
+    let raw = fs::read_to_string(path).ok()?;
+    let payload = serde_json::from_str::<ClaudeKeychainPayload>(&raw).ok()?;
+    let oauth = payload.claude_ai_oauth?;
+    let access_token = oauth.access_token.as_deref()?;
+    validate_claude_oauth_access_token(access_token, "credentials file").ok()?;
+
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    if oauth.expires_at? <= now_ms + 60_000 {
+        return None;
+    }
+
+    Some(ClaudeCredentials {
+        access_token: oauth.access_token.clone(),
+        subscription_type: oauth.subscription_type,
+        rate_limit_tier: oauth.rate_limit_tier,
+    })
+}
+
 async fn load_claude_credentials_from_file() -> Result<ClaudeCredentials, String> {
     let path = claude_credentials_path()?;
     let raw = fs::read_to_string(&path).map_err(|e| {
@@ -709,7 +780,15 @@ async fn load_claude_credentials_from_file() -> Result<ClaudeCredentials, String
                 if expires_at_ms <= now_ms + 60_000 {
                     if let Some(ref refresh_token) = oauth.refresh_token {
                         // refresh_claude_token handles writing back to file
-                        return refresh_claude_token(refresh_token, &oauth, "file").await;
+                        return match refresh_claude_token(refresh_token, &oauth, "file").await {
+                            Ok(credentials) => Ok(credentials),
+                            // Anthropic rotates refresh tokens, so losing a
+                            // refresh race against Claude Code leaves ours
+                            // dead. Re-read the file: the winner has written
+                            // fresh tokens there.
+                            Err(refresh_err) => reread_valid_credentials(&path)
+                                .ok_or(refresh_err),
+                        };
                     } else {
                         return Err(
                             "Claude file token is expired and no refresh token available."
@@ -860,7 +939,10 @@ async fn fetch_claude_usage_oauth() -> Result<(ClaudeData, Option<String>), Stri
                     response = Some(resp);
                     break;
                 }
-                if resp.status() != reqwest::StatusCode::TOO_MANY_REQUESTS {
+                // 429 and 5xx are transient; anything else won't improve on retry.
+                if resp.status() != reqwest::StatusCode::TOO_MANY_REQUESTS
+                    && !resp.status().is_server_error()
+                {
                     return Err(format!("Claude OAuth API returned HTTP {}", resp.status()));
                 }
             }
@@ -1194,6 +1276,21 @@ fn string_at(value: &Value, path: &[&str]) -> Option<String> {
     value_at(value, path).and_then(|v| v.as_str().map(|s| s.to_string()))
 }
 
+// Session snapshots go stale once their window's reset time passes: the CLI
+// only records rate limits while running, so after a reset the last recorded
+// used_percent no longer applies. Treat such windows as fresh (0% used) and
+// drop the reset time, since the next window hasn't started yet.
+fn expire_codex_window(
+    percent_used: f64,
+    resets_at: Option<i64>,
+    now_epoch: i64,
+) -> (f64, Option<i64>) {
+    match resets_at {
+        Some(reset) if reset <= now_epoch => (0.0, None),
+        _ => (percent_used, resets_at),
+    }
+}
+
 fn fetch_codex_usage() -> Result<CodexData, String> {
     let sessions_dir = codex_sessions_dir()?;
     let mut files = Vec::new();
@@ -1253,7 +1350,27 @@ fn fetch_codex_usage() -> Result<CodexData, String> {
     }
 
     latest
-        .map(|(_, data)| data)
+        .map(|(_, mut data)| {
+            let now_epoch = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let (session_percent, session_reset) = expire_codex_window(
+                data.session_percent_used,
+                data.session_reset_epoch,
+                now_epoch,
+            );
+            let (weekly_percent, weekly_reset) = expire_codex_window(
+                data.weekly_percent_used,
+                data.weekly_reset_epoch,
+                now_epoch,
+            );
+            data.session_percent_used = session_percent;
+            data.session_reset_epoch = session_reset;
+            data.weekly_percent_used = weekly_percent;
+            data.weekly_reset_epoch = weekly_reset;
+            data
+        })
         .ok_or_else(|| "No Codex rate-limit events found. Start or continue a Codex session so the CLI records usage.".to_string())
 }
 
@@ -1314,5 +1431,126 @@ async fn main() {
 
     if !resp.ok {
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expired_codex_window_reports_zero_usage() {
+        // Snapshot said 77% used, but the window reset an hour ago.
+        assert_eq!(
+            expire_codex_window(77.0, Some(1_000_000), 1_003_600),
+            (0.0, None)
+        );
+    }
+
+    #[test]
+    fn window_expiring_exactly_now_reports_zero_usage() {
+        assert_eq!(
+            expire_codex_window(50.0, Some(1_000_000), 1_000_000),
+            (0.0, None)
+        );
+    }
+
+    #[test]
+    fn active_codex_window_is_unchanged() {
+        assert_eq!(
+            expire_codex_window(77.0, Some(1_003_600), 1_000_000),
+            (77.0, Some(1_003_600))
+        );
+    }
+
+    #[test]
+    fn window_without_reset_time_is_unchanged() {
+        assert_eq!(expire_codex_window(42.0, None, 1_000_000), (42.0, None));
+    }
+
+    fn refreshed_blob() -> ClaudeOAuthBlob {
+        ClaudeOAuthBlob {
+            access_token: Some("new-access".to_string()),
+            refresh_token: Some("new-refresh".to_string()),
+            expires_at: Some(2_000_000),
+            scopes: None,
+            subscription_type: None,
+            rate_limit_tier: None,
+        }
+    }
+
+    #[test]
+    fn merge_preserves_unknown_top_level_fields() {
+        let existing = r#"{
+            "claudeAiOauth": {
+                "accessToken": "old-access",
+                "refreshToken": "old-refresh",
+                "expiresAt": 1000,
+                "scopes": ["user:profile"],
+                "subscriptionType": "max"
+            },
+            "organizationUuid": "org-1234"
+        }"#;
+        let merged = merge_refreshed_oauth_json(Some(existing), &refreshed_blob());
+        let value: Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(
+            value.get("organizationUuid").and_then(|v| v.as_str()),
+            Some("org-1234")
+        );
+    }
+
+    #[test]
+    fn merge_updates_tokens_and_expiry() {
+        let existing = r#"{"claudeAiOauth":{"accessToken":"old","refreshToken":"old-r","expiresAt":1}}"#;
+        let merged = merge_refreshed_oauth_json(Some(existing), &refreshed_blob());
+        let value: Value = serde_json::from_str(&merged).unwrap();
+        let oauth = value.get("claudeAiOauth").unwrap();
+        assert_eq!(
+            oauth.get("accessToken").and_then(|v| v.as_str()),
+            Some("new-access")
+        );
+        assert_eq!(
+            oauth.get("refreshToken").and_then(|v| v.as_str()),
+            Some("new-refresh")
+        );
+        assert_eq!(oauth.get("expiresAt").and_then(|v| v.as_i64()), Some(2_000_000));
+    }
+
+    #[test]
+    fn merge_preserves_unknown_oauth_subfields() {
+        let existing = r#"{"claudeAiOauth":{"accessToken":"old","someFutureField":true}}"#;
+        let merged = merge_refreshed_oauth_json(Some(existing), &refreshed_blob());
+        let value: Value = serde_json::from_str(&merged).unwrap();
+        let oauth = value.get("claudeAiOauth").unwrap();
+        assert_eq!(
+            oauth.get("someFutureField").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn merge_falls_back_to_blob_when_existing_is_invalid() {
+        let merged = merge_refreshed_oauth_json(Some("not json"), &refreshed_blob());
+        let value: Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(
+            value
+                .get("claudeAiOauth")
+                .and_then(|o| o.get("accessToken"))
+                .and_then(|v| v.as_str()),
+            Some("new-access")
+        );
+    }
+
+    #[test]
+    fn merge_handles_missing_existing_file() {
+        let merged = merge_refreshed_oauth_json(None, &refreshed_blob());
+        let value: Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(
+            value
+                .get("claudeAiOauth")
+                .and_then(|o| o.get("refreshToken"))
+                .and_then(|v| v.as_str()),
+            Some("new-refresh")
+        );
     }
 }
