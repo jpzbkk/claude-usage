@@ -23,11 +23,16 @@ ColumnLayout {
     property color glowColor: barColor
     property string displayMode: "remaining"
     property bool showTag: true
+    // No usable reading yet (provider errored, or never reported). Draw an
+    // empty track rather than a bar that looks like a real 0%/100% value.
+    property bool noData: false
 
     spacing: 2
 
     // Effective fill percentage accounting for display mode
     readonly property real fillPercent: {
+        if (noData)
+            return 0
         var p = Math.max(0, Math.min(100, percent))
         return displayMode === "remaining" ? (100 - p) : p
     }
@@ -115,11 +120,11 @@ ColumnLayout {
     // Percentage text
     Text {
         Layout.alignment: Qt.AlignHCenter
-        text: barRoot.fillPercent.toFixed(0) + "%"
+        text: barRoot.noData ? "--" : barRoot.fillPercent.toFixed(0) + "%"
         font.pixelSize: 9
         font.family: "monospace"
         font.bold: true
-        color: Kirigami.Theme.textColor
+        color: barRoot.noData ? Kirigami.Theme.disabledTextColor : Kirigami.Theme.textColor
     }
 
     // Tag label

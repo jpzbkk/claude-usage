@@ -38,21 +38,21 @@ ColumnLayout {
     spacing: 4
 
     // ---- Loading / Error indicator ----
-    Item {
+    Text {
         Layout.fillWidth: true
-        Layout.preferredHeight: 14
+        Layout.leftMargin: 6
+        Layout.rightMargin: 6
+        Layout.maximumHeight: 48
         visible: root.loading || root.errorMessage.length > 0
-
-        Text {
-            anchors.centerIn: parent
-            text: root.loading ? "Loading..." : root.errorMessage
-            font.pixelSize: 9
-            color: root.loading ? Kirigami.Theme.disabledTextColor : "#ef4444"
-            elide: Text.ElideRight
-            width: parent.width - 12
-            horizontalAlignment: Text.AlignHCenter
-        }
-
+        text: root.loading ? "Loading..." : root.errorMessage
+        font.pixelSize: 9
+        color: root.loading ? Kirigami.Theme.disabledTextColor : "#ef4444"
+        // Helper errors are full sentences; wrap them instead of eliding to a
+        // stub like "Codex: No Codex rate-limit events found. Start or co..."
+        wrapMode: Text.WordWrap
+        maximumLineCount: 4
+        elide: Text.ElideRight
+        horizontalAlignment: Text.AlignHCenter
     }
 
     // ---- All providers side by side ----
@@ -115,6 +115,7 @@ ColumnLayout {
                         UsageBar {
                             Layout.fillHeight: true
                             percent: root.cursorPlanPercent
+                            noData: !root.cursorDataLoaded
                             tag: "P"
                             barColor: "#818cf8"
                             glowColor: "#818cf8"
@@ -124,6 +125,7 @@ ColumnLayout {
                         UsageBar {
                             Layout.fillHeight: true
                             percent: root.cursorOnDemandPercent
+                            noData: !root.cursorDataLoaded
                             tag: "D"
                             barColor: "#22c55e"
                             glowColor: "#22c55e"
@@ -160,7 +162,7 @@ ColumnLayout {
             Layout.topMargin: 8
             Layout.bottomMargin: 8
             width: 1
-            color: Kirigami.Theme.separatorColor
+            color: Kirigami.Theme.textColor
             opacity: 0.4
         }
 
@@ -216,6 +218,7 @@ ColumnLayout {
                         UsageBar {
                             Layout.fillHeight: true
                             percent: root.claudeSessionPercent
+                            noData: !root.claudeDataLoaded
                             tag: "5h"
                             barColor: "#facc15"
                             glowColor: "#facc15"
@@ -225,6 +228,7 @@ ColumnLayout {
                         UsageBar {
                             Layout.fillHeight: true
                             percent: root.claudeWeeklyPercent
+                            noData: !root.claudeDataLoaded
                             tag: "Wk"
                             barColor: "#f97316"
                             glowColor: "#f97316"
@@ -261,7 +265,7 @@ ColumnLayout {
             Layout.topMargin: 8
             Layout.bottomMargin: 8
             width: 1
-            color: Kirigami.Theme.separatorColor
+            color: Kirigami.Theme.textColor
             opacity: 0.4
         }
 
@@ -313,6 +317,7 @@ ColumnLayout {
                         UsageBar {
                             Layout.fillHeight: true
                             percent: root.codexSessionPercent
+                            noData: !root.codexDataLoaded
                             tag: "5h"
                             barColor: "#38bdf8"
                             glowColor: "#38bdf8"
@@ -322,6 +327,7 @@ ColumnLayout {
                         UsageBar {
                             Layout.fillHeight: true
                             percent: root.codexWeeklyPercent
+                            noData: !root.codexDataLoaded
                             tag: "Wk"
                             barColor: "#a3e635"
                             glowColor: "#a3e635"

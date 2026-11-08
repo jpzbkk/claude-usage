@@ -10,8 +10,11 @@ Kirigami.FormLayout {
     property alias cfg_showCursor: showCursorCheck.checked
     property alias cfg_showClaude: showClaudeCheck.checked
     property alias cfg_showCodex: showCodexCheck.checked
-    property alias cfg_displayMode: displayModeCombo.currentIndex
     property alias cfg_helperPath: helperPathField.text
+    // displayMode is a string in main.xml. Plasma passes every cfg_ value as an
+    // initial property when it creates this page, so aliasing it to an int
+    // (ComboBox.currentIndex) made the whole page fail to construct.
+    property string cfg_displayMode: "remaining"
 
     QQC2.SpinBox {
         id: pollIntervalSpinBox
@@ -20,7 +23,6 @@ Kirigami.FormLayout {
         from: 10
         to: 3600
         stepSize: 10
-        value: plasmoid.configuration.pollIntervalSeconds
     }
 
     QQC2.CheckBox {
@@ -28,42 +30,45 @@ Kirigami.FormLayout {
 
         Kirigami.FormData.label: i18n("Providers:")
         text: i18n("Show Cursor")
-        checked: plasmoid.configuration.showCursor
     }
 
     QQC2.CheckBox {
         id: showClaudeCheck
 
         text: i18n("Show Claude")
-        checked: plasmoid.configuration.showClaude
     }
 
     QQC2.CheckBox {
         id: showCodexCheck
 
         text: i18n("Show Codex")
-        checked: plasmoid.configuration.showCodex
     }
 
     QQC2.ComboBox {
         id: displayModeCombo
 
         Kirigami.FormData.label: i18n("Display mode:")
-        model: ["remaining", "usage"]
-        currentIndex: model.indexOf(plasmoid.configuration.displayMode)
-        onCurrentIndexChanged: {
-            if (currentIndex >= 0)
-                plasmoid.configuration.displayMode = model[currentIndex];
-
+        textRole: "text"
+        valueRole: "value"
+        model: [{
+            "value": "remaining",
+            "text": i18n("Remaining (drains down)")
+        }, {
+            "value": "usage",
+            "text": i18n("Usage (fills up)")
+        }]
+        onActivated: configPage.cfg_displayMode = currentValue
+        Component.onCompleted: {
+            var idx = indexOfValue(configPage.cfg_displayMode);
+            currentIndex = idx >= 0 ? idx : 0;
         }
     }
 
     QQC2.TextField {
         id: helperPathField
 
-        Kirigami.FormData.label: i18n("Helper script path (leave empty for default):")
-        placeholderText: "~/.local/share/token-juice/token_juice_helper.py"
-        text: plasmoid.configuration.helperPath
+        Kirigami.FormData.label: i18n("Helper binary path (leave empty for default):")
+        placeholderText: "~/.local/share/token-juice/token-juice-helper"
     }
 
 }
